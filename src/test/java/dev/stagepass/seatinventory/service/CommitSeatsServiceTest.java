@@ -128,8 +128,9 @@ class CommitSeatsServiceTest {
 
         // Assert — Redis BOOKED sentinels are set (no TTL — permanent booking)
         verify(valueOperations, times(2)).set(anyString(), anyString());
-        // Outbox event and audit transitions in the same transaction
-        verify(outboxRepository).save(any(OutboxEntity.class));
+        // One outbox row PER SEAT (seat.state-changed events are per-seat for Notification
+        // Service granularity — each seat's state change is an independent event).
+        verify(outboxRepository, times(2)).save(any(OutboxEntity.class));
         verify(transitionRepository, times(2)).save(any(SeatStateTransitionEntity.class));
     }
 

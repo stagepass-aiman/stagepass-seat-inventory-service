@@ -44,8 +44,12 @@ public class OutboxEntity {
     @Column(name = "partition_key", nullable = false)
     private UUID partitionKey;
 
-    // Full JSON payload matching seat_async.yaml. columnDefinition required for validate.
+    // columnDefinition tells Hibernate the DDL type (for ddl-auto=validate).
+    // @JdbcTypeCode(SqlTypes.JSON) tells the JDBC driver how to BIND the parameter —
+    // without it, Hibernate sends a String as character varying, which PostgreSQL
+    // rejects for a jsonb column even though columnDefinition is set.
     @Column(name = "payload", nullable = false, columnDefinition = "jsonb")
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
     private String payload;
 
     @Column(name = "status", nullable = false, length = 20)
