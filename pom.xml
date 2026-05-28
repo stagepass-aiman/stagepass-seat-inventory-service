@@ -174,12 +174,11 @@
       <artifactId>grpc-testing</artifactId>
       <scope>test</scope>
     </dependency>
-    <dependency>
-      <groupId>net.devh</groupId>
-      <artifactId>grpc-server-spring-boot-starter</artifactId>
-      <version>${grpc.spring.boot.starter.version}</version>
-      <scope>test</scope>
-    </dependency>
+    <!-- grpc-server-spring-boot-starter is transitively included at compile scope
+         via grpc-spring-boot-starter above. Do NOT re-declare it here with
+         test scope — that would override the transitive compile scope via Maven's
+         nearest-definition rule and make net.devh.boot.grpc.server.* packages
+         unavailable during main compilation. -->
     <!-- Testcontainers -->
     <dependency>
       <groupId>org.testcontainers</groupId>

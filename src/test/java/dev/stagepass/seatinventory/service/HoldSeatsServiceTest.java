@@ -113,7 +113,7 @@ class HoldSeatsServiceTest {
                         "GRPC", java.time.Instant.now().plusSeconds(600), 2);
         given(idempotencyRepo.findByIdempotencyKeyAndOperation(
                 bookingId.toString(), "HOLD_SEATS"))
-                .willReturn(Optional.of(new dev.stagepass.seatinventory.entity.IdempotencyKeyEntity()));
+                .willReturn(Optional.of(dev.stagepass.seatinventory.entity.IdempotencyKeyEntity.create(java.util.UUID.randomUUID(), bookingId.toString(), "HOLD_SEATS", "CACHED", null, java.time.Instant.now().plusSeconds(86400))));
         given(seatHoldRepo.findByBookingId(bookingId))
                 .willReturn(Optional.of(hold));
 
