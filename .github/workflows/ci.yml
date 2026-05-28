@@ -33,16 +33,17 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   pull_request:
-    branches: [main]
+    branches: [ main ]
 
 env:
-  JAVA_VERSION: "21"
+  JAVA_VERSION: '21'
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/stagepass-seat-inventory-service
 
 jobs:
+
   # ── 1. Secrets scan ─────────────────────────────────────────────────────────
   # Phase 3 build log §15: gitleaks CLI, not gitleaks-action.
   # The action requires a paid org license. The CLI has no such restriction.
@@ -130,11 +131,11 @@ jobs:
     name: SAST (SonarQube + Semgrep)
     runs-on: ubuntu-latest
     needs: unit-test
-    continue-on-error: true # RULE-19
+    continue-on-error: true          # RULE-19
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # SonarQube needs full history for blame
+          fetch-depth: 0             # SonarQube needs full history for blame
 
       - name: Set up JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
@@ -183,7 +184,7 @@ jobs:
             -DfailBuildOnCVSS=9 \
             -DsuppressionFile=.trivyignore \
             -B --no-transfer-progress
-        continue-on-error: true # NVD feed rate limits fail in CI; PHASE 8 TODO: add NVD_API_KEY
+        continue-on-error: true      # NVD feed rate limits fail in CI; PHASE 8 TODO: add NVD_API_KEY
 
       - name: Upload dependency check report
         uses: actions/upload-artifact@v4
@@ -197,7 +198,7 @@ jobs:
   build-and-scan:
     name: Build Image + Trivy Scan
     runs-on: ubuntu-latest
-    needs: [unit-test, integration-test]
+    needs: [ unit-test, integration-test ]
     permissions:
       contents: read
       packages: write
@@ -242,7 +243,7 @@ jobs:
           push: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          load: true # load into local Docker so Trivy can scan it
+          load: true              # load into local Docker so Trivy can scan it
 
       - name: Trivy container scan
         # v0.31.0: first clean release after 2026-03-19 supply chain compromise.
@@ -255,9 +256,9 @@ jobs:
         # which no longer exists. Override to the first clean post-incident binary.
         # PHASE 8 TODO: upgrade trivy-action to a version that defaults to v0.70.0+.
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          image-ref: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
           format: table
-          exit-code: "1"
+          exit-code: '1'
           ignore-unfixed: true
           vuln-type: os,library
           severity: CRITICAL
@@ -280,8 +281,7 @@ jobs:
   ci:
     name: CI
     runs-on: ubuntu-latest
-    needs:
-      [secrets-scan, unit-test, integration-test, sast, sca, build-and-scan]
+    needs: [ secrets-scan, unit-test, integration-test, sast, sca, build-and-scan ]
     if: always()
     steps:
       - name: Check all required jobs passed
