@@ -1,0 +1,19 @@
+# application-test.yml
+# Overrides for integration and unit test contexts.
+# Testcontainers provides real PostgreSQL and Redis — no H2, no mocks for infra.
+spring:
+  jpa:
+    show-sql: false
+  flyway:
+    enabled: true
+  kafka:
+    bootstrap-servers: localhost:9999   # overridden per-test by @DynamicPropertySource
+
+grpc:
+  server:
+    port: 0   # Random port for tests — avoids port conflicts in parallel test runs
+
+management:
+  health:
+    redis:
+      enabled: false  # Disable Redis health check in tests that don't start Redis

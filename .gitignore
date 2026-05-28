@@ -1,0 +1,55 @@
+# ── Build output ──────────────────────────────────────────────────────────────
+target/
+*.jar
+*.war
+*.ear
+*.class
+
+# ── Maven ─────────────────────────────────────────────────────────────────────
+.mvn/wrapper/maven-wrapper.jar
+!.mvn/wrapper/maven-wrapper.properties
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.idea/
+*.iml
+*.iws
+*.ipr
+.project
+.classpath
+.settings/
+*.suo
+*.user
+.vs/
+*.swp
+*.swo
+
+# ── Secrets — NEVER commit these ──────────────────────────────────────────────
+# All secrets live in Vault or environment variables.
+# .env files are for local dev ONLY and are never committed.
+.env
+.env.*
+!.env.example          # .env.example IS committed (contains no secrets)
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Coverage ──────────────────────────────────────────────────────────────────
+coverage/
+
+# ── SonarQube local cache ─────────────────────────────────────────────────────
+.sonar/
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+# The compose file IS committed. Only local env overrides are excluded.
+docker-compose.override.yml
+
+# ── Terraform (if ever added) ─────────────────────────────────────────────────
+.terraform/
+*.tfstate
+*.tfstate.backup

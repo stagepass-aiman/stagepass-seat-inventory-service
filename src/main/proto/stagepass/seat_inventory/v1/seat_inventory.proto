@@ -1,0 +1,195 @@
+// ============================================================
+// seat_inventory.proto
+//
+// gRPC contract for the Seat Inventory Service.
+//
+// Canonical location: stagepass-shared-contracts/proto/stagepass/seat_inventory/v1/
+// Local copy: used for compile-time stub generation in this service.
+//
+// ADR-003 §3.3.2  — gRPC pair 1: Booking → Seat Inventory (Java → Java)
+// ADR-005 §3.10   — gRPC contract: HoldSeats, ExtendHold, CommitSeats, ReleaseSeats
+// ADR-006 §3.2    — HoldSeats all-or-nothing atomicity (Redis Lua SETNX)
+// ADR-006 §3.5    — CheckSeatAvailability is read-only (no hold acquired)
+//
+// ⚠️  SCHEMA EVOLUTION RULES (ADR-003 §4.1):
+//   - Field numbers are PERMANENT once assigned.
+//   - New optional fields may be added; field numbers increment.
+//   - Never remove a field. Never change a field's type.
+//   - Never change a field's number.
+//
+// TODO Phase 7: replace this local copy with a dependency on
+//   stagepass-shared-contracts (git submodule or published artifact).
+// ============================================================
+
+syntax = "proto3";
+
+package stagepass.seat_inventory.v1;
+
+option java_package = "dev.stagepass.seatinventory.grpc.proto";
+option java_outer_classname = "SeatInventoryProto";
+option java_multiple_files = true;
+
+// ─────────────────────────────────────────────────────────────
+// Service definition
+// ─────────────────────────────────────────────────────────────
+
+service SeatInventoryService {
+
+  // Read-only availability check.
+  // Does NOT acquire a hold — hold is a separate saga step (ADR-006 §3.4 TOCTOU analysis).
+  // Called by Booking Service at checkout initiation to fail-fast before creating booking record.
+  // A AVAILABLE response here does NOT guarantee availability at HoldSeats time.
+  rpc CheckSeatAvailability (CheckSeatAvailabilityRequest)
+      returns (CheckSeatAvailabilityResponse);
+
+  // Atomically hold seats for a booking.
+  // All-or-nothing: either all seats held, or none (UNAVAILABLE returned).
+  // Idempotent: seats already HELD for this bookingId return existing hold without resetting TTL.
+  // gRPC deadline: 400 ms (ADR-005 §3.4 Step 1 — to stay within 2 s sync checkout budget).
+  // NFR-PERF-001: p99 < 500 ms.
+  rpc HoldSeats (HoldSeatsRequest) returns (HoldSeatsResponse);
+
+  // Extend an existing hold by additionalTtlSeconds.
+  // Called when Payment Service is unavailable (NFR-AVAIL-003: extend by 300 s).
+  // Idempotent: if no hold exists for bookingId, returns success.
+  rpc ExtendHold (ExtendHoldRequest) returns (ExtendHoldResponse);
+
+  // Transition held seats HELD → BOOKED.
+  // Called after payment.events:payment.succeeded consumed (ADR-005 Step 4).
+  // Executed within SERIALIZABLE PostgreSQL transaction (NFR-REL-008, ADR-006 §3.7).
+  // Idempotent: seats already BOOKED for this bookingId return success.
+  rpc CommitSeats (CommitSeatsRequest) returns (CommitSeatsResponse);
+
+  // Release held seats back to AVAILABLE.
+  // Saga compensation for Steps 1 and 2 (ADR-005 §3.6).
+  // Idempotent: if seats already AVAILABLE, returns success.
+  rpc ReleaseSeats (ReleaseSeatsRequest) returns (ReleaseSeatsResponse);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────
+
+enum SeatState {
+  SEAT_STATE_UNSPECIFIED = 0;
+  AVAILABLE              = 1;
+  HELD                   = 2;
+  BOOKED                 = 3;
+  BLOCKED                = 4;
+}
+
+enum HoldSeatsStatus {
+  HOLD_SEATS_STATUS_UNSPECIFIED = 0;
+  SUCCESS                       = 1;
+  // One or more requested seats are not AVAILABLE. unavailable_seats populated.
+  UNAVAILABLE                   = 2;
+  // Service is in flash sale mode — caller must use flash-sale.hold-requests Kafka topic.
+  FLASH_SALE_MODE               = 3;
+}
+
+enum CommitSeatsStatus {
+  COMMIT_SEATS_STATUS_UNSPECIFIED = 0;
+  COMMIT_SUCCESS                  = 1;
+  // Hold no longer exists (expired or released) — Booking Service must compensate.
+  HOLD_NOT_FOUND                  = 2;
+  // Serialisation failure — caller should retry per NFR-REL-006 backoff policy.
+  SERIALIZATION_FAILURE           = 3;
+}
+
+enum ReleaseSeatsStatus {
+  RELEASE_SEATS_STATUS_UNSPECIFIED = 0;
+  RELEASE_SUCCESS                  = 1;
+  // Seats already AVAILABLE — idempotent success.
+  ALREADY_RELEASED                 = 2;
+}
+
+// ─────────────────────────────────────────────────────────────
+// CheckSeatAvailability
+// ─────────────────────────────────────────────────────────────
+
+message CheckSeatAvailabilityRequest {
+  string event_id        = 1; // UUID
+  repeated string seat_ids = 2; // UUIDs of requested seats
+  // W3C traceparent for OTel propagation across gRPC boundary (ADR-003 §3.6).
+  string traceparent     = 3;
+  string tracestate      = 4;
+}
+
+message CheckSeatAvailabilityResponse {
+  bool all_available              = 1;
+  repeated UnavailableSeat unavailable_seats = 2;
+}
+
+message UnavailableSeat {
+  string    seat_id       = 1;
+  SeatState current_state = 2;
+}
+
+// ─────────────────────────────────────────────────────────────
+// HoldSeats
+// ─────────────────────────────────────────────────────────────
+
+message HoldSeatsRequest {
+  string          booking_id   = 1; // UUID — idempotency anchor (ADR-006 §3.8)
+  string          event_id     = 2; // UUID
+  string          customer_id  = 3; // UUID — for notification routing on TTL expiry
+  repeated string seat_ids     = 4; // UUIDs — all-or-nothing
+  string          traceparent  = 5;
+  string          tracestate   = 6;
+}
+
+message HoldSeatsResponse {
+  HoldSeatsStatus status              = 1;
+  string          hold_id             = 2; // UUID — present when status=SUCCESS
+  string          held_until          = 3; // ISO-8601 UTC — Redis TTL expiry (600 s from now)
+  repeated string unavailable_seats   = 4; // UUIDs — populated when status=UNAVAILABLE
+}
+
+// ─────────────────────────────────────────────────────────────
+// ExtendHold
+// ─────────────────────────────────────────────────────────────
+
+message ExtendHoldRequest {
+  string booking_id            = 1; // UUID
+  int32  additional_ttl_seconds = 2; // Typically 300 s (NFR-AVAIL-003)
+  string traceparent           = 3;
+}
+
+message ExtendHoldResponse {
+  bool   success      = 1;
+  string held_until   = 2; // Updated ISO-8601 UTC expiry timestamp
+}
+
+// ─────────────────────────────────────────────────────────────
+// CommitSeats
+// ─────────────────────────────────────────────────────────────
+
+message CommitSeatsRequest {
+  string          booking_id  = 1; // UUID
+  string          event_id    = 2; // UUID
+  repeated string seat_ids    = 3; // UUIDs — must match original HoldSeats request
+  string          traceparent = 4;
+  string          tracestate  = 5;
+}
+
+message CommitSeatsResponse {
+  CommitSeatsStatus status     = 1;
+  string            booked_at  = 2; // ISO-8601 UTC — present when status=COMMIT_SUCCESS
+}
+
+// ─────────────────────────────────────────────────────────────
+// ReleaseSeats
+// ─────────────────────────────────────────────────────────────
+
+message ReleaseSeatsRequest {
+  string          booking_id  = 1; // UUID
+  string          event_id    = 2; // UUID
+  repeated string seat_ids    = 3; // UUIDs
+  // Reason for release — for audit trail (seat_state_transitions.transition_reason)
+  string          reason      = 4; // SAGA_COMPENSATION | ADMIN_RELEASE
+  string          traceparent = 5;
+}
+
+message ReleaseSeatsResponse {
+  ReleaseSeatsStatus status = 1;
+}

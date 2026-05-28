@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Structured JSON logging via logstash-logback-encoder.
+     Correlation IDs (traceId, spanId) injected by Micrometer Tracing
+     into MDC automatically. Fields: traceId, spanId, service, message.
+     NFR-OBS-001: structured JSON, correlation IDs mandatory. -->
+<configuration>
+  <springProperty scope="context" name="springAppName" source="spring.application.name"/>
+
+  <appender name="JSON_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+      <customFields>{"service":"${springAppName}"}</customFields>
+      <fieldNames>
+        <timestamp>timestamp</timestamp>
+        <message>message</message>
+        <logger>logger</logger>
+        <level>level</level>
+      </fieldNames>
+    </encoder>
+  </appender>
+
+  <root level="INFO">
+    <appender-ref ref="JSON_CONSOLE"/>
+  </root>
+</configuration>

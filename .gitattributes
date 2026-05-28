@@ -1,0 +1,40 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# .gitattributes — StagePass Seat Inventory Service
+#
+# RULE-30: Windows writes CRLF to shell scripts. Bash inside Linux containers
+# treats \r as part of each command → "$'\r': command not found".
+# Forcing eol=lf here ensures scripts are stored with Unix line endings
+# regardless of the developer's OS.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Default: normalise all text files to LF on checkout
+* text=auto eol=lf
+
+# Shell scripts: always LF (RULE-30 — prevents \r in container bash)
+*.sh text eol=lf
+
+# Java source: LF
+*.java text eol=lf
+
+# XML/YAML config: LF
+*.xml  text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+
+# Proto files: LF
+*.proto text eol=lf
+
+# Lua scripts: LF
+*.lua text eol=lf
+
+# SQL migrations: LF
+*.sql text eol=lf
+
+# Binary files: do not modify
+*.jar  binary
+*.png  binary
+*.jpg  binary
+*.gif  binary
+*.ico  binary
+*.gz   binary
+*.zip  binary

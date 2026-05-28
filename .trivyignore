@@ -1,0 +1,29 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# .trivyignore — StagePass Seat Inventory Service
+#
+# RULE-21: Every suppression must include:
+#   - CVE ID and affected package@version
+#   - Reason: why it is not exploitable in this specific usage
+#   - Expires: review date (max 6 months from suppression date)
+#
+# Format:
+#   # CVE-YYYY-NNNNN (package@version)
+#   # Reason: ...
+#   # Expires: YYYY-MM-DD
+#   CVE-YYYY-NNNNN
+#
+# DO NOT suppress CRITICAL CVEs without written justification reviewed
+# by a second engineer. This file is reviewed as part of Phase 8 hardening.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# No suppressions at scaffold time.
+# Add entries here as they arise, with full justification per RULE-21.
+# Example (do not uncomment without real CVE context):
+#
+# # CVE-2025-12345 (some-library@1.2.3)
+# # Reason: Vulnerability requires unauthenticated HTTP endpoint. This service
+# #         has no REST surface — only gRPC (port 9090, NetworkPolicy restricted)
+# #         and Actuator (port 8090, internal only). The attack vector is not
+# #         reachable in our deployment topology.
+# # Expires: 2026-12-01
+# CVE-2025-12345

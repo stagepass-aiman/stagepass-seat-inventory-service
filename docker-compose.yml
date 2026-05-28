@@ -1,0 +1,90 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# StagePass Seat Inventory Service — Standalone Local Dev Compose
+#
+# This file is for developing this service IN ISOLATION.
+# It is NOT the integrated stack (stagepass-infrastructure docker-compose.yml).
+#
+# Ports (standalone — differ from integrated stack to avoid conflicts):
+#   PostgreSQL  → host:5440  (integrated stack: 5433)
+#   Redis       → host:6390  (integrated stack: 6379 is shared)
+#   gRPC        → host:9090
+#   Actuator    → host:8090
+#
+# Kafka is NOT included here — the service starts with Kafka disabled
+# via KAFKA_ENABLED=false. Flash-sale consumer will not run.
+# Use the integrated stack for full Kafka testing.
+#
+# Usage:
+#   cp .env.example .env         # fill in real secrets
+#   docker compose up -d         # start deps
+#   mvn spring-boot:run          # run service on host JVM
+#
+# Or build and run the image:
+#   docker compose --profile service up --build -d
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  seat-inventory-postgres:
+    image: postgres:16-alpine
+    container_name: seat-inventory-postgres
+    environment:
+      POSTGRES_DB: seat_inventory_db
+      POSTGRES_USER: seat_inventory
+      POSTGRES_PASSWORD: ${SEAT_INVENTORY_DB_PASSWORD:-seat_inventory_secret}
+    ports:
+      - "5440:5432"
+    volumes:
+      - seat-inventory-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seat_inventory -d seat_inventory_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  seat-inventory-redis:
+    image: redis:7-alpine
+    container_name: seat-inventory-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6390:6379"
+    volumes:
+      - seat-inventory-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── Service (optional profile — use when testing the built image) ──────────
+  seat-inventory-service:
+    profiles: ["service"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: seat-inventory-service
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      SEAT_INVENTORY_DB_URL: jdbc:postgresql://seat-inventory-postgres:5432/seat_inventory_db
+      SEAT_INVENTORY_DB_USER: seat_inventory
+      SEAT_INVENTORY_DB_PASSWORD: ${SEAT_INVENTORY_DB_PASSWORD:-seat_inventory_secret}
+      SEAT_INVENTORY_REDIS_HOST: seat-inventory-redis
+      SEAT_INVENTORY_REDIS_PORT: 6379
+      KAFKA_BROKERS: ""          # disabled in standalone mode
+      KAFKA_ENABLED: "false"
+      OTEL_EXPORTER_OTLP_ENDPOINT: ""
+      OTEL_TRACES_EXPORTER: none
+    ports:
+      - "9090:9090"              # gRPC (Booking Service → Seat Inventory)
+      - "8090:8090"              # Spring Actuator (health + metrics)
+    depends_on:
+      seat-inventory-postgres:
+        condition: service_healthy
+      seat-inventory-redis:
+        condition: service_healthy
+
+volumes:
+  seat-inventory-postgres-data:
+  seat-inventory-redis-data:

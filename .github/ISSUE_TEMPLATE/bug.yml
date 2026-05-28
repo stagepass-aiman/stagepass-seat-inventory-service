@@ -1,0 +1,60 @@
+name: Bug
+description: Something is broken in the Seat Inventory Service
+title: "fix(seat-inventory): "
+labels: ["bug", "service:seat-inventory"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Complete all fields. Include exact reproduction steps.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What is broken?
+      description: Clear, concise description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      value: |
+        1. 
+        2. 
+        3. 
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance Criteria
+      value: |
+        - [ ] Bug no longer reproducible via steps above
+        - [ ] Regression test added
+        - [ ] CI pipeline green
+        - [ ] CHANGELOG.md updated
+    validations:
+      required: true
+
+  - type: input
+    id: blocked-by
+    attributes:
+      label: Blocked By
+      placeholder: stagepass-aiman/stagepass-booking-service#12

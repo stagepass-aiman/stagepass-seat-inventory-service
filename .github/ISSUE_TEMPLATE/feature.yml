@@ -1,0 +1,56 @@
+name: Feature
+description: New feature or behaviour for the Seat Inventory Service
+title: "feat(seat-inventory): "
+labels: ["feature", "service:seat-inventory"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Complete all fields before submitting. Incomplete issues will be closed.
+
+  - type: textarea
+    id: purpose
+    attributes:
+      label: Purpose
+      description: What does this change do and why is it needed?
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance Criteria
+      description: Checkboxes — all must be ticked before merge.
+      value: |
+        - [ ] 
+        - [ ] 
+        - [ ] Tests written and passing
+        - [ ] CI pipeline green
+        - [ ] OpenAPI / AsyncAPI spec updated if interface changed
+        - [ ] CHANGELOG.md updated
+        - [ ] No secrets committed (gitleaks passes)
+        - [ ] ADR written if architectural decision was made
+    validations:
+      required: true
+
+  - type: input
+    id: blocked-by
+    attributes:
+      label: Blocked By
+      description: Cross-issue reference (format — org/repo#N). Leave blank if none.
+      placeholder: stagepass-aiman/stagepass-booking-service#12
+
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Phase
+      options:
+        - Phase 4 — Core Services
+        - Phase 5 — AI/ML
+        - Phase 6 — Frontend
+        - Phase 7 — Quality
+        - Phase 8 — CI/CD
+        - Phase 9 — Cloud
+        - Phase 10 — Polish
+    validations:
+      required: true

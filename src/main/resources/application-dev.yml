@@ -1,0 +1,12 @@
+# application-dev.yml — local development overrides
+# Values here are for standalone local dev (docker-compose.yml in this repo).
+# Integrated stack (stagepass-infrastructure) uses environment variables from .env.
+spring:
+  jpa:
+    show-sql: false    # set to true only when debugging a specific query
+
+logging:
+  level:
+    dev.stagepass.seatinventory: DEBUG
+    org.springframework.kafka: INFO
+    io.grpc: INFO
