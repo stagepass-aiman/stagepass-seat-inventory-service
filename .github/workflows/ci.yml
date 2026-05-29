@@ -14,9 +14,13 @@
 # gitleaks/gitleaks-action. The action requires a paid org license on
 # GitHub Free plan's org context. CLI has no such restriction.
 #
-# Phase 3 build log §16: Trivy is pinned to v0.36.0. The @master tag
-# was compromised on 2026-03-19/20. Never use @master for security
-# scanning tools.
+# Phase 3 build log §16: Trivy pinned to v0.31.0 — first clean release
+# after the 2026-03-19 supply chain compromise where tags v0.0.1–v0.34.2
+# had credential-stealing malware injected via force-pushed tags.
+# PHASE 8 TODO: pin to full immutable commit SHA per GitHub security
+# hardening guidance (https://docs.github.com/en/actions/security-guides/
+# security-hardening-for-github-actions#using-third-party-actions).
+# NEVER use @master or mutable version tags for security scanning tools.
 #
 # RULE-19: SAST (SonarQube) has continue-on-error: true until SonarQube
 # is cloud-accessible. Local instance not reachable from GitHub Actions.
@@ -209,7 +213,7 @@ jobs:
           cache: maven
 
       - name: Build JAR (skip tests — already run)
-        run: mvn package -DskipTests -B --no-transfer-progress
+        run: mvn package -Dmaven.test.skip=true -B --no-transfer-progress
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -242,17 +246,24 @@ jobs:
           load: true              # load into local Docker so Trivy can scan it
 
       - name: Trivy container scan
-        # Phase 3 build log §16: Trivy pinned to v0.36.0.
-        # @master was compromised 2026-03-19/20. Never use @master.
-        uses: aquasecurity/trivy-action@0.36.0
+        # v0.31.0: first clean release after 2026-03-19 supply chain compromise.
+        # Tags v0.0.1–v0.34.2 had credential-stealing malware injected via
+        # force-pushed tags. v0.36.0 does not exist — versioning jumped post-incident.
+        # PHASE 8 TODO: pin to full immutable commit SHA.
+        uses: aquasecurity/trivy-action@v0.31.0
+        # Trivy binary v0.70.0 — releases v0.27.0–v0.69.1 were deleted in the
+        # 2026-03-19 supply chain attack. v0.31.0 action defaults to v0.63.0
+        # which no longer exists. Override to the first clean post-incident binary.
+        # PHASE 8 TODO: upgrade trivy-action to a version that defaults to v0.70.0+.
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          image-ref: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
           format: table
           exit-code: '1'
           ignore-unfixed: true
           vuln-type: os,library
           severity: CRITICAL
           trivyignores: .trivyignore
+          version: v0.70.0
 
       - name: Push image
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

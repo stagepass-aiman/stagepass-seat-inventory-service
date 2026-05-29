@@ -1,7 +1,6 @@
 package dev.stagepass.seatinventory.service;
 
-// RULE-35: ESLint disable comments must be after imports. Same discipline
-// applied here — any suppress annotations go after the import block.
+// RULE-35: suppress annotations after imports.
 
 import dev.stagepass.seatinventory.entity.OutboxEntity;
 import dev.stagepass.seatinventory.entity.SeatHoldEntity;
@@ -9,8 +8,6 @@ import dev.stagepass.seatinventory.entity.SeatHoldSeatEntity;
 import dev.stagepass.seatinventory.entity.SeatStateEntity;
 import dev.stagepass.seatinventory.entity.SeatStateEnum;
 import dev.stagepass.seatinventory.entity.SeatStateTransitionEntity;
-import dev.stagepass.seatinventory.redis.RedisKeySchema;
-import dev.stagepass.seatinventory.redis.SeatHoldLuaScript;
 import dev.stagepass.seatinventory.repository.OutboxRepository;
 import dev.stagepass.seatinventory.repository.SeatHoldRepository;
 import dev.stagepass.seatinventory.repository.SeatHoldSeatRepository;
@@ -34,8 +31,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -45,149 +42,142 @@ import static org.mockito.Mockito.when;
 /**
  * Unit tests for CommitSeatsService.
  *
- * CommitSeatsService is the SERIALIZABLE path — it converts a Redis hold
- * into a durable PostgreSQL BOOKED record. The service:
- *   1. Loads the SeatHold (must be in HELD status)
- *   2. Loads each SeatHoldSeat's corresponding SeatState
- *   3. Verifies every seat is still HELD (no concurrent cancellation)
- *   4. Marks seats BOOKED in Postgres (within SERIALIZABLE transaction)
- *   5. Sets Redis sentinel key "BOOKED" (no TTL — permanent)
+ * CommitSeatsService converts a Redis hold into a durable BOOKED record.
+ * The service:
+ *   1. Loads the SeatHold by bookingId (must be in HELD status)
+ *   2. Loads all SeatState rows for the event + seat IDs (findByEventIdAndSeatIdIn)
+ *   3. Verifies every seat is in HELD state with the correct bookingId
+ *   4. Marks seats BOOKED within a SERIALIZABLE transaction
+ *   5. Sets Redis BOOKED sentinel key (no TTL — permanent booking)
  *   6. Writes outbox event + audit transition in the same transaction
  *
- * Why SERIALIZABLE only on CommitSeats, not HoldSeats?
- *   HoldSeats uses Redis Lua SETNX as the atomic lock — applying SERIALIZABLE
- *   there would serialise all concurrent holds through the PG lock manager,
- *   violating NFR-PERF-001 (p99 < 500ms). SERIALIZABLE on CommitSeats protects
- *   the final durable write, not the hot-path lock.
+ * CommitResult is an enum: SUCCESS | HOLD_NOT_FOUND | SERIALIZATION_FAILURE.
  *
- * These tests verify the commit logic in isolation (mocked repositories).
- * Integration tests (CommitSeatsIntegrationTest) verify SERIALIZABLE behaviour
- * with a real PostgreSQL instance.
+ * Constructor parameter order (CommitSeatsService):
+ *   (SeatStateRepository, SeatHoldRepository, SeatHoldSeatRepository,
+ *    SeatStateTransitionRepository, OutboxRepository, StringRedisTemplate)
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class CommitSeatsServiceTest {
 
-    @Mock
-    private SeatHoldRepository seatHoldRepository;
-
-    @Mock
-    private SeatHoldSeatRepository seatHoldSeatRepository;
-
-    @Mock
-    private SeatStateRepository seatStateRepository;
-
-    @Mock
-    private SeatStateTransitionRepository transitionRepository;
-
-    @Mock
-    private OutboxRepository outboxRepository;
-
-    @Mock
-    private SeatHoldLuaScript seatHoldLuaScript;
-
-    @Mock
-    private StringRedisTemplate redisTemplate;
-
-    @Mock
-    private ValueOperations<String, String> valueOperations;
+    // Constructor order matches CommitSeatsService(seatStateRepo, seatHoldRepo,
+    // seatHoldSeatRepo, transitionRepo, outboxRepo, redis)
+    @Mock private SeatStateRepository      seatStateRepository;
+    @Mock private SeatHoldRepository       seatHoldRepository;
+    @Mock private SeatHoldSeatRepository   seatHoldSeatRepository;
+    @Mock private SeatStateTransitionRepository transitionRepository;
+    @Mock private OutboxRepository         outboxRepository;
+    @Mock private StringRedisTemplate      redisTemplate;
+    @Mock private ValueOperations<String, String> valueOperations;
 
     private CommitSeatsService commitSeatsService;
 
-    private static final String EVENT_ID = UUID.randomUUID().toString();
-    private static final String BOOKING_ID = UUID.randomUUID().toString();
-    private static final String SEAT_ID_A = UUID.randomUUID().toString();
-    private static final String SEAT_ID_B = UUID.randomUUID().toString();
+    private static final UUID EVENT_ID   = UUID.randomUUID();
+    private static final UUID BOOKING_ID = UUID.randomUUID();
+    private static final UUID SEAT_ID_A  = UUID.randomUUID();
+    private static final UUID SEAT_ID_B  = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        // Match constructor parameter order in CommitSeatsService
         commitSeatsService = new CommitSeatsService(
+                seatStateRepository,
                 seatHoldRepository,
                 seatHoldSeatRepository,
-                seatStateRepository,
                 transitionRepository,
                 outboxRepository,
                 redisTemplate
         );
     }
 
-    // ── Scenario 1: Happy path ────────────────────────────────────────────────
+    // ── Happy path ────────────────────────────────────────────────────────────
 
     @Test
     @DisplayName("CommitSeats: held seats are committed and Redis BOOKED sentinels set")
     void commitSeats_happyPath_marksBookedAndSetsRedisSentinels() {
-        // Arrange — build a SeatHold with two seats in HELD status
-        SeatHoldEntity hold = buildHeldHold(BOOKING_ID, EVENT_ID, List.of(SEAT_ID_A, SEAT_ID_B));
-        List<SeatHoldSeatEntity> holdSeats = hold.getSeatHoldSeats();
-        SeatStateEntity stateA = buildSeatState(SEAT_ID_A, EVENT_ID, SeatStateEnum.HELD);
-        SeatStateEntity stateB = buildSeatState(SEAT_ID_B, EVENT_ID, SeatStateEnum.HELD);
+        // Arrange — build a SeatHold with two HELD seats via static factory
+        final SeatHoldEntity hold = SeatHoldEntity.create(
+                UUID.randomUUID(), BOOKING_ID, EVENT_ID, UUID.randomUUID(),
+                "GRPC", Instant.now().plusSeconds(600), 2);
 
-        when(seatHoldRepository.findByBookingId(BOOKING_ID)).thenReturn(Optional.of(hold));
-        when(seatHoldSeatRepository.findByHoldId(hold.getId())).thenReturn(holdSeats);
-        when(seatStateRepository.findByEventIdAndSeatId(EVENT_ID, SEAT_ID_A)).thenReturn(Optional.of(stateA));
-        when(seatStateRepository.findByEventIdAndSeatId(EVENT_ID, SEAT_ID_B)).thenReturn(Optional.of(stateB));
+        // SeatStateEntities must be in HELD state with matching bookingId so that
+        // the service's row-count guard passes: heldCount == seatIds.size()
+        final SeatStateEntity stateA = buildHeldSeat(SEAT_ID_A, EVENT_ID, BOOKING_ID);
+        final SeatStateEntity stateB = buildHeldSeat(SEAT_ID_B, EVENT_ID, BOOKING_ID);
+
+        when(seatHoldRepository.findByBookingId(BOOKING_ID))
+                .thenReturn(Optional.of(hold));
+        // Service calls findByEventIdAndSeatIdIn — not individual findByEventIdAndSeatId
+        when(seatStateRepository.findByEventIdAndSeatIdIn(EVENT_ID, List.of(SEAT_ID_A, SEAT_ID_B)))
+                .thenReturn(List.of(stateA, stateB));
         when(seatStateRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(seatHoldSeatRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(seatHoldRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(transitionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(outboxRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(seatHoldRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        // Act
-        CommitSeatsService.CommitResult result = commitSeatsService.commitSeats(BOOKING_ID);
+        // Act — commitSeats(UUID bookingId, UUID eventId, List<UUID> seatIds)
+        final CommitSeatsService.CommitResult result =
+                commitSeatsService.commitSeats(BOOKING_ID, EVENT_ID, List.of(SEAT_ID_A, SEAT_ID_B));
 
         // Assert — seats are BOOKED in Postgres
-        assertThat(result.success()).isTrue();
+        assertThat(result).isEqualTo(CommitSeatsService.CommitResult.SUCCESS);
         assertThat(stateA.getState()).isEqualTo(SeatStateEnum.BOOKED);
         assertThat(stateB.getState()).isEqualTo(SeatStateEnum.BOOKED);
 
         // Assert — Redis BOOKED sentinels are set (no TTL — permanent booking)
-        // The service must call opsForValue().set() for each seat — no expiry arg.
         verify(valueOperations, times(2)).set(anyString(), anyString());
-        // Outbox event and audit transitions must be written in the same transaction
-        verify(outboxRepository).save(any(OutboxEntity.class));
+        // One outbox row PER SEAT (seat.state-changed events are per-seat for Notification
+        // Service granularity — each seat's state change is an independent event).
+        verify(outboxRepository, times(2)).save(any(OutboxEntity.class));
         verify(transitionRepository, times(2)).save(any(SeatStateTransitionEntity.class));
     }
 
-    // ── Scenario 2: Hold not found ────────────────────────────────────────────
+    // ── Hold not found ────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("CommitSeats: booking ID not found returns failure result")
-    void commitSeats_holdNotFound_returnsFailure() {
-        // Arrange
-        when(seatHoldRepository.findByBookingId(BOOKING_ID)).thenReturn(Optional.empty());
+    @DisplayName("CommitSeats: booking ID not found returns HOLD_NOT_FOUND")
+    void commitSeats_holdNotFound_returnsHoldNotFound() {
+        when(seatHoldRepository.findByBookingId(BOOKING_ID))
+                .thenReturn(Optional.empty());
 
-        // Act
-        CommitSeatsService.CommitResult result = commitSeatsService.commitSeats(BOOKING_ID);
+        final CommitSeatsService.CommitResult result =
+                commitSeatsService.commitSeats(BOOKING_ID, EVENT_ID, List.of(SEAT_ID_A));
 
-        // Assert — never touches Redis or writes outbox when hold is missing
-        assertThat(result.success()).isFalse();
-        assertThat(result.reason()).contains("not found");
+        // CommitResult is an enum — check enum value directly
+        assertThat(result).isEqualTo(CommitSeatsService.CommitResult.HOLD_NOT_FOUND);
         verify(valueOperations, never()).set(anyString(), anyString());
         verify(outboxRepository, never()).save(any());
     }
 
-    // ── Scenario 3: Seat state changed since hold ─────────────────────────────
+    // ── Seat state changed since hold ─────────────────────────────────────────
 
     @Test
-    @DisplayName("CommitSeats: seat no longer HELD (concurrent cancellation) returns failure")
-    void commitSeats_seatNotHeld_returnsFailure() {
-        // Arrange — one seat has been moved to AVAILABLE (e.g. admin unblock race)
-        SeatHoldEntity hold = buildHeldHold(BOOKING_ID, EVENT_ID, List.of(SEAT_ID_A));
-        List<SeatHoldSeatEntity> holdSeats = hold.getSeatHoldSeats();
-        // Seat was HELD but is now AVAILABLE (concurrent state change)
-        SeatStateEntity stateA = buildSeatState(SEAT_ID_A, EVENT_ID, SeatStateEnum.AVAILABLE);
+    @DisplayName("CommitSeats: seat no longer HELD returns HOLD_NOT_FOUND (concurrent cancellation)")
+    void commitSeats_seatNotHeld_returnsHoldNotFound() {
+        // Arrange — seat has been moved to AVAILABLE concurrently
+        final SeatHoldEntity hold = SeatHoldEntity.create(
+                UUID.randomUUID(), BOOKING_ID, EVENT_ID, UUID.randomUUID(),
+                "GRPC", Instant.now().plusSeconds(600), 1);
 
-        when(seatHoldRepository.findByBookingId(BOOKING_ID)).thenReturn(Optional.of(hold));
-        when(seatHoldSeatRepository.findByHoldId(hold.getId())).thenReturn(holdSeats);
-        when(seatStateRepository.findByEventIdAndSeatId(EVENT_ID, SEAT_ID_A)).thenReturn(Optional.of(stateA));
+        // Seat is AVAILABLE — bookingId will be null, heldCount will be 0
+        final SeatStateEntity stateA = SeatStateEntity.create(
+                UUID.randomUUID(), EVENT_ID, SEAT_ID_A,
+                UUID.randomUUID(), "A", "1", "STANDARD",
+                new BigDecimal("50.0000"), "INR");
+        // stateA.getState() == AVAILABLE (default from create), bookingId == null
 
-        // Act
-        CommitSeatsService.CommitResult result = commitSeatsService.commitSeats(BOOKING_ID);
+        when(seatHoldRepository.findByBookingId(BOOKING_ID))
+                .thenReturn(Optional.of(hold));
+        when(seatStateRepository.findByEventIdAndSeatIdIn(EVENT_ID, List.of(SEAT_ID_A)))
+                .thenReturn(List.of(stateA));
 
-        // Assert — SERIALIZABLE transaction must have been rolled back (test verifies
-        // no BOOKED writes occurred). In production this would trigger saga compensation.
-        assertThat(result.success()).isFalse();
+        final CommitSeatsService.CommitResult result =
+                commitSeatsService.commitSeats(BOOKING_ID, EVENT_ID, List.of(SEAT_ID_A));
+
+        // heldCount (0) != seatIds.size() (1) → HOLD_NOT_FOUND
+        assertThat(result).isEqualTo(CommitSeatsService.CommitResult.HOLD_NOT_FOUND);
         verify(seatStateRepository, never()).save(any());
         verify(outboxRepository, never()).save(any());
         verify(valueOperations, never()).set(anyString(), anyString());
@@ -195,35 +185,19 @@ class CommitSeatsServiceTest {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private SeatHoldEntity buildHeldHold(
-            String bookingId, String eventId, List<String> seatIds) {
-        SeatHoldEntity hold = new SeatHoldEntity();
-        hold.setId(UUID.randomUUID());
-        hold.setBookingId(UUID.fromString(bookingId));
-        hold.setEventId(UUID.fromString(eventId));
-        hold.setExpiresAt(Instant.now().plusSeconds(600));
-        // Status field matches enum — HELD
-        // (exact field name depends on SeatHoldEntity implementation)
-        List<SeatHoldSeatEntity> seats = seatIds.stream().map(sid -> {
-            SeatHoldSeatEntity s = new SeatHoldSeatEntity();
-            s.setId(UUID.randomUUID());
-            s.setSeatId(UUID.fromString(sid));
-            s.setHold(hold);
-            return s;
-        }).toList();
-        hold.setSeatHoldSeats(seats);
-        return hold;
-    }
-
-    private SeatStateEntity buildSeatState(
-            String seatId, String eventId, SeatStateEnum state) {
-        SeatStateEntity entity = new SeatStateEntity();
-        entity.setId(UUID.randomUUID());
-        entity.setSeatId(UUID.fromString(seatId));
-        entity.setEventId(UUID.fromString(eventId));
-        entity.setState(state);
-        entity.setPrice(new BigDecimal("50.0000"));
-        entity.setVersion(0L);
+    /**
+     * Build a SeatStateEntity in HELD state with the given bookingId.
+     * Uses SeatStateEntity.create() (protected constructor) then markHeld().
+     * Required for the row-count guard in CommitSeatsService:
+     *   heldCount = seats filtered by state==HELD && bookingId==bookingId
+     */
+    private SeatStateEntity buildHeldSeat(
+            final UUID seatId, final UUID eventId, final UUID bookingId) {
+        final SeatStateEntity entity = SeatStateEntity.create(
+                UUID.randomUUID(), eventId, seatId,
+                UUID.randomUUID(), "A", "1", "STANDARD",
+                new BigDecimal("50.0000"), "INR");
+        entity.markHeld(bookingId, UUID.randomUUID(), Instant.now().plusSeconds(600));
         return entity;
     }
 }

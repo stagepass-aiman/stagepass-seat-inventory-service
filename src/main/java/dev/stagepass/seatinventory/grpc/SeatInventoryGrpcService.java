@@ -99,14 +99,27 @@ public class SeatInventoryGrpcService extends SeatInventoryServiceGrpc.SeatInven
             final HoldSeatsRequest request,
             final StreamObserver<HoldSeatsResponse> responseObserver) {
 
-        final UUID bookingId = UUID.fromString(request.getBookingId());
-        final UUID eventId   = UUID.fromString(request.getEventId());
+        final UUID bookingId  = UUID.fromString(request.getBookingId());
+        final UUID eventId    = UUID.fromString(request.getEventId());
         final UUID customerId = UUID.fromString(request.getCustomerId());
         final List<UUID> seatIds = request.getSeatIdsList().stream()
                 .map(UUID::fromString).toList();
 
-        final HoldSeatsService.HoldResult result =
-                holdSeatsService.holdSeats(bookingId, eventId, customerId, seatIds, "GRPC");
+        final HoldSeatsService.HoldResult result;
+        try {
+            result = holdSeatsService.holdSeats(bookingId, eventId, customerId, seatIds, "GRPC");
+        } catch (final Exception e) {
+            // Unexpected infrastructure failure (e.g. Redis unavailable).
+            // Business-level failures (seat unavailable, flash-sale mode) are handled
+            // below via result.success() — they never throw.
+            log.error("HoldSeats unexpected error — bookingId={}", bookingId, e);
+            responseObserver.onError(
+                    io.grpc.Status.INTERNAL
+                            .withDescription("Internal error during seat hold")
+                            .withCause(e)
+                            .asRuntimeException());
+            return;
+        }
 
         final HoldSeatsResponse.Builder response = HoldSeatsResponse.newBuilder();
         if (result.success()) {

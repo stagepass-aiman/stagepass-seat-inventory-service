@@ -3,6 +3,7 @@ package dev.stagepass.seatinventory.integration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -30,6 +31,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  *   - reconciliation: expired holds detected and released
  */
 @SpringBootTest
+@ActiveProfiles("test")
 @Testcontainers
 @DisplayName("HoldSeats integration tests")
 class HoldSeatsIntegrationTest {
@@ -57,10 +59,9 @@ class HoldSeatsIntegrationTest {
         registry.add("spring.data.redis.host", redis::getHost);
         registry.add("spring.data.redis.port",
                 () -> redis.getMappedPort(6379).toString());
-        // Disable Kafka for integration tests — test only DB + Redis path
-        registry.add("spring.kafka.bootstrap-servers", () -> "localhost:9999");
-        registry.add("spring.autoconfigure.exclude",
-                () -> "org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration");
+        // Kafka is handled by @ActiveProfiles("test") — application-test.yml sets
+        // bootstrap-servers=localhost:9999. Do NOT exclude KafkaAutoConfiguration here;
+        // OutboxPublisher requires KafkaTemplate which that auto-config provides.
     }
 
     @Test
